@@ -3,3 +3,8 @@
 3. Implement Adapter, LoRA, compare with hugging face's adapters and LoRA
 4. Try to figure out the reason that their different
     - The activations were already different after the first layer. I think it could be the RoPE embedding.
+
+1. Copy HF Weight Matrices to My implementation
+2. Try to replicate IRM on Llama 2
+3. Implement IRM on Llama 3
+4. Train IRM on other datasets
