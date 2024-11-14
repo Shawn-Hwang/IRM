@@ -6,6 +6,7 @@ from tqdm import tqdm
 import yaml
 from sklearn.model_selection import train_test_split
 from transformers import LlamaTokenizer as HFTokenizer
+from transformers import AutoTokenizer
 
 from sp_tokenizer.tokenizer import Tokenizer as SPTokenizer
 from utils.data_utils import Struct
@@ -18,7 +19,7 @@ def tokenize_data_chunk(tokenizer, chunk):
     """
     to_tokenize:str = chunk['text']
 
-    if type(tokenizer) == HFTokenizer:
+    if type(tokenizer) == AutoTokenizer:
         # Does not pad during pre processing, pads dynamically during training
         result = tokenizer(to_tokenize, add_special_tokens=True, padding=False)
         chunk['Tokenized_Data'] = result.input_ids
@@ -38,7 +39,7 @@ def generate_tokenized_file(raw_data_path, tokenizer_path, tokenizer_type):
     
     # Load tokenizer
     if tokenizer_type == 'hf':
-        tokenizer = HFTokenizer.from_pretrained(tokenizer_path)
+        tokenizer = AutoTokenizer.from_pretrained(tokenizer_path)
     elif tokenizer_type == 'sp':
         tokenizer = SPTokenizer(tokenizer_path)
     else:

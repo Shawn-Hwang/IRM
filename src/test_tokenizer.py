@@ -1,9 +1,9 @@
 from transformers import LlamaTokenizer as HFTokenizer
 from transformers import AutoTokenizer
 
-model_path = "meta-llama/Llama-2-7b-chat-hf"
+model_path = "/home/huang717/DRAGN/IRM/injectable-alignment-model/src/local_tokenizer"
 
-tokenizer = AutoTokenizer.from_pretrained(model_path,use_fast=True)
+tokenizer = AutoTokenizer.from_pretrained(model_path)
 
 # Sample text to tokenize
 text = "Hello! This is a test string with some numbers 123 and special characters @#$."
