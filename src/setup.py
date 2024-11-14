@@ -3,11 +3,12 @@ import os
 import torch
 
 from transformers import LlamaTokenizer as HFTokenizer
+from transformers import AutoTokenizer
 from llama_models.llama_for_causal import LlamaForCausalLM as Llama
 
 def download_tokenizer(model_path = "meta-llama/Llama-2-7b-chat-hf", token = ""):
     print("instantiating pretrained tokenizer")
-    HFTokenizer.from_pretrained(pretrained_model_name_or_path = model_path, token = token)
+    AutoTokenizer.from_pretrained(model_path)
 
 def save_pretrained_checkpoint(
         model_path = "meta-llama/Llama-2-7b-chat-hf",

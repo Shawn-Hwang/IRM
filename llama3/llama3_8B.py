@@ -2,6 +2,7 @@ import torch
 from torch import nn
 from torch.nn import functional as F
 from transformers.modeling_rope_utils import ROPE_INIT_FUNCTIONS
+import math
 
 device = "cuda" if torch.cuda.is_available() else "cpu"
 torch.set_default_dtype(torch.bfloat16) # Otherwise it may not fit into memory.
@@ -64,6 +65,17 @@ def apply_rotary_emb(xq, xk, freqs_cis):
     xq_out = torch.view_as_real(xq_ * freqs_cis).flatten(3)
     xk_out = torch.view_as_real(xk_ * freqs_cis).flatten(3)
     return xq_out.type_as(xq), xk_out.type_as(xk)
+
+def repeat_kv(x: torch.Tensor, n_rep: int) -> torch.Tensor:
+    """torch.repeat_interleave(x, dim=2, repeats=n_rep)"""
+    bs, slen, n_kv_heads, head_dim = x.shape
+    if n_rep == 1:
+        return x
+    return (
+        x[:, :, :, None, :]
+        .expand(bs, slen, n_kv_heads, n_rep, head_dim)
+        .reshape(bs, slen, n_kv_heads * n_rep, head_dim)
+    )
 
 
 ## HF Rope helper funcs
@@ -199,15 +211,17 @@ class FeedForward(nn.Module):
 
     def forward(self, x):
         return self.w2(F.silu(self.w1(x)) * self.w3(x)) # (2, 8, DIM) = (bsz, seqlen, DIM) - use the SwiGLU activation function (llama3) Table 3.
-    
+
+
 # GQA With Cache
 class Attention(nn.Module):
-    def __init__(self):
+    def __init__(self,sdpa=True):
         super().__init__()
         self.wq = nn.Linear(DIM, N_HEADS * HEAD_DIM, bias=False)
         self.wk = nn.Linear(DIM, N_KV_HEADS * HEAD_DIM, bias=False)
         self.wv = nn.Linear(DIM, N_KV_HEADS * HEAD_DIM, bias=False)
         self.wo = nn.Linear(N_HEADS * HEAD_DIM, DIM, bias=False) # Weight matrix defined in the MultiheadAttention formula.
+        self.sdpa = sdpa
         
         # HF RoPE class
         # self.rotary_emb = LlamaRotaryEmbedding()
@@ -220,7 +234,7 @@ class Attention(nn.Module):
                 N_KV_HEADS,
                 HEAD_DIM,
             )
-        )
+        ).cuda()
         self.cache_v = torch.zeros(
             (
                 MAX_BATCH_SIZE,
@@ -228,13 +242,11 @@ class Attention(nn.Module):
                 N_KV_HEADS,
                 HEAD_DIM,
             )
-        )
+        ).cuda()
 
     def forward(self, x, start_pos, freqs_cis, mask, position_embeddings):
         bsz, seqlen, _ = x.shape # Get batch size and sequence length. (bsz, seqlen, DIM)
         queries, keys, values = self.wq(x), self.wk(x), self.wv(x) # q -> (bsz, seqlen, N_HEADS*HEAD_DIM) | k,v -> (bsz, seqlen, N_KV_HEADS*HEAD_DIM)
-
-        cos, sin = position_embeddings
 
         queries = queries.view(bsz, seqlen, N_HEADS, HEAD_DIM)
         keys = keys.view(bsz, seqlen, N_KV_HEADS, HEAD_DIM)
@@ -244,6 +256,7 @@ class Attention(nn.Module):
         queries, keys = apply_rotary_emb(queries, keys, freqs_cis=freqs_cis)
 
         # # HF RoPE
+        # cos, sin = position_embeddings
         # queries, keys = apply_rotary_pos_emb(queries, keys, cos, sin, unsqueeze_dim=2)
 
         self.cache_k = self.cache_k.to(queries.device)
@@ -255,25 +268,40 @@ class Attention(nn.Module):
         keys = self.cache_k[:bsz, : start_pos + seqlen]
         values = self.cache_v[:bsz, : start_pos + seqlen]
 
-        # In these runs we simply duplicated the KV heads for MQA in all GPUs. (llama2)
-        keys = torch.repeat_interleave(
-            keys, dim=2, repeats=N_KV_HEAD_REP
-        ) # (bsz, seqlen, N_KV_HEADS, HEAD_DIM) -> (bsz, seqlen, N_HEADS, HEAD_DIM)
-        values = torch.repeat_interleave(
-            values, dim=2, repeats=N_KV_HEAD_REP
-        )  # (bsz, seqlen, N_KV_HEADS, HEAD_DIM) -> (bsz, seqlen, N_HEADS, HEAD_DIM)
+        # # In these runs we simply duplicated the KV heads for MQA in all GPUs. (llama2)
+        # keys = torch.repeat_interleave(
+        #     keys, dim=2, repeats=N_KV_HEAD_REP
+        # ) # (bsz, seqlen, N_KV_HEADS, HEAD_DIM) -> (bsz, seqlen, N_HEADS, HEAD_DIM)
+        # values = torch.repeat_interleave(
+        #     values, dim=2, repeats=N_KV_HEAD_REP
+        # )  # (bsz, seqlen, N_KV_HEADS, HEAD_DIM) -> (bsz, seqlen, N_HEADS, HEAD_DIM)
+
+        # repeat k/v heads if n_kv_heads < n_heads
+        keys = repeat_kv(
+            keys, N_KV_HEAD_REP
+        )  # (bs, cache_len + seqlen, n_local_heads, head_dim)
+        values = repeat_kv(
+            values, N_KV_HEAD_REP
+        )  # (bs, cache_len + seqlen, n_local_heads, head_dim)
 
         # Reshaping for scaled_dot_product_attention. (bsz, ..., seqlen, HEAD_DIM) expected.
         queries = queries.transpose(1, 2) # (bsz, seqlen, N_HEADS, HEAD_DIM) -> (bsz, N_HEADS, seqlen, HEAD_DIM)
         keys = keys.transpose(1, 2) # (bsz, seqlen, N_HEADS, HEAD_DIM) -> (bsz, N_HEADS, seqlen, HEAD_DIM)
         values = values.transpose(1, 2) # (bsz, seqlen, N_HEADS, HEAD_DIM) -> (bsz, N_HEADS, seqlen, HEAD_DIM)
 
-        out = F.scaled_dot_product_attention(
-            queries,
-            keys,
-            values,
-            attn_mask=mask,
-        ) # (bsz, N_HEADS, seqlen, HEAD_DIM)
+        if self.sdpa:
+            out = F.scaled_dot_product_attention(
+                queries,
+                keys,
+                values,
+                attn_mask=mask,
+            ) # (bsz, N_HEADS, seqlen, HEAD_DIM)
+        else:
+            scores = torch.matmul(queries, keys.transpose(2, 3)) / math.sqrt(HEAD_DIM)
+            if mask is not None:
+                scores = scores + mask  # (bs, n_local_heads, seqlen, cache_len + seqlen)
+            scores = F.softmax(scores.float(), dim=-1).type_as(queries)
+            out = torch.matmul(scores, values)  # (bs, n_local_heads, seqlen, head_dim)
         
         
         # If we don't use `contiguous` torch may complain.
@@ -281,9 +309,9 @@ class Attention(nn.Module):
         return self.wo(out) # (bsz, seqlen, DIM)
     
 class TransformerBlock(nn.Module):
-    def __init__(self):
+    def __init__(self, sdpa = True):
         super().__init__()
-        self.attention = Attention()
+        self.attention = Attention(sdpa)
         self.feed_forward = FeedForward()
         self.attention_norm = RMSNorm(DIM, NORM_EPS)
         self.ffn_norm = RMSNorm(DIM, NORM_EPS)
@@ -294,7 +322,7 @@ class TransformerBlock(nn.Module):
         return out # (2, 8, DIM) = (bsz, seqlen, DIM)
     
 class Transformer(nn.Module):
-    def __init__(self, return_activation = False):
+    def __init__(self, return_activation = False, sdpa=True):
         super().__init__()
         self.activations = []
         self.tok_embeddings = nn.Embedding(
@@ -303,7 +331,7 @@ class Transformer(nn.Module):
         
         self.layers = torch.nn.ModuleList()
         for _ in range(N_LAYERS):
-            self.layers.append(TransformerBlock())
+            self.layers.append(TransformerBlock(sdpa))
 
         self.norm = RMSNorm(DIM, NORM_EPS)
         self.output = nn.Linear(DIM, VOCAB_SIZE, bias=False,)
@@ -322,7 +350,7 @@ class Transformer(nn.Module):
     def forward(self, tokens, start_pos):       
         _bsz, seqlen = tokens.shape
         h = self.tok_embeddings(tokens) # (bsz, seqlen, DIM)
-        self.freqs_cis = self.freqs_cis.to(tokens.device)
+        self.freqs_cis = self.freqs_cis.to(h.device)
         freqs_cis = self.freqs_cis[start_pos : start_pos + seqlen]
 
         mask = None # When we take the tokens from the cached values (seqlen=1) we don't need any aditional mask.
@@ -330,6 +358,19 @@ class Transformer(nn.Module):
             mask = torch.full((seqlen, seqlen), float("-inf"), device=tokens.device) # Since this is the first pass, we don't have any KV Cache. So we need a mask. Create (seqlen, seqlen) matrix with float("-inf") values.
 
             mask = torch.triu(mask, diagonal=1).to(tokens.device) # Take the upper triangle excluding diagonal since it's casual LM.
+            # https://github.com/pytorch/pytorch/issues/100005
+            # torch.triu is buggy when the device is mps: filled values are
+            # nan instead of 0.
+            if mask.device.type == torch.device("mps").type:
+                mask = torch.nan_to_num(mask, nan=0.0)
+
+            # When performing key-value caching, we compute the attention scores
+            # only for the new sequence. Thus, the matrix of scores is of size
+            # (seqlen, cache_len + seqlen), and the only masked entries are (i, j) for
+            # j > cache_len + i, since row i corresponds to token cache_len + i.
+            mask = torch.hstack(
+                [torch.zeros((seqlen, start_pos), device=tokens.device), mask]
+            ).type_as(h)
 
         ### HF Rope start
         cache_position = torch.arange(
@@ -613,6 +654,7 @@ class Llama:
         max_batch_size: int,
         model_parallel_size: Optional[int] = None,
         seed: int = 1,
+        sdpa = True,
     ) -> "Llama":
         """
         Build a Llama instance by initializing and loading a model checkpoint.
@@ -664,9 +706,7 @@ class Llama:
             torch.set_default_tensor_type(torch.cuda.BFloat16Tensor)
         else:
             torch.set_default_tensor_type(torch.cuda.HalfTensor)
-        print("Before initializating the model")
-        model = Transformer()
-        print('Initialized the transformer model')
+        model = Transformer(sdpa=sdpa)
         print(f"PARAMETERS: {sum(p.numel() for p in model.parameters())}")
         model.load_state_dict(checkpoint, strict=False)
         print(f"Loaded in {time.time() - start_time:.2f} seconds")

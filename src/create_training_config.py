@@ -7,7 +7,7 @@ def main():
     injection_locations = [[i for i in range(32)]]
 
     # set directory where datasets and checkpoints are saved
-    home_dir = "/YOUR/PATH/injectable-alignment-model"
+    home_dir = "/home/huang717/DRAGN/IRM/injectable-alignment-model"
     # change config_dir if you want to store data in a different location from where you are running the code
     config_dir = home_dir
 
@@ -21,7 +21,7 @@ def main():
     tokenizer_path = f"meta-llama/{model_name}" if tokenizer_type == "hf" else "PLACE_HOLDER", # PATH_TO_TOKENIZER
     
     # set this to the path output by setup.py
-    checkpoint_path = "PLACE HOLDER"
+    checkpoint_path = "/home/huang717/DRAGN/IRM/injectable-alignment-model/default_checkpoints/Llama-2-7b-chat-hf.ckpt"
 
     # Note: each dataset should have its own folder and file name
     dataset_folders = ["anger_QA_7b_60k"]

@@ -7,7 +7,7 @@ def main():
     injection_locations = [[i for i in range(32)]]
 
     # set directory where datasets and checkpoints are saved
-    home_dir = "PLACE HOLDER"
+    home_dir = "/home/huang717/DRAGN/IRM/injectable-alignment-model"
     # change config_dir if you want to store data in a different location from where you are running the code
     config_dir = home_dir
     # checkpoint_name = "PLACE HOLDER"

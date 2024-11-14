@@ -39,7 +39,7 @@ def create_causal_mask(input_ids):
 
 def generate(my_model, my_tokenizer, hf_model, hf_tokenizer,prompt):
     temperature = 0.6
-    top_p = 0.8
+    top_p = 0.9
     max_seq_len = 128
     max_gen_len = 64
     max_batch_size = 4
@@ -76,6 +76,66 @@ def generate(my_model, my_tokenizer, hf_model, hf_tokenizer,prompt):
     hf_result = hf_tokenizer.decode(hf_result[0], skip_special_tokens=True)
     return my_result, hf_result
 
+def compare_matrix_rows(matrix1: torch.Tensor, 
+                       matrix2: torch.Tensor) -> bool:
+    """
+    Compare if two PyTorch tensors contain the same rows regardless of order.
+    
+    Args:
+        matrix1: First matrix as PyTorch tensor
+        matrix2: Second matrix as PyTorch tensor
+        
+    Returns:
+        bool: True if matrices contain same rows, False otherwise
+        
+    Example:
+        >>> m1 = torch.tensor([[1, 2], [3, 4]])
+        >>> m2 = torch.tensor([[3, 4], [1, 2]])
+        >>> compare_matrix_rows(m1, m2)
+        True
+    """
+    # Check if shapes match
+    if matrix1.shape != matrix2.shape:
+        return False
+    
+    # Sort both matrices along rows for comparison
+    # We use lexicographical sorting
+    sorted1, _ = torch.sort(matrix1.view(-1, matrix1.shape[-1]), dim=0)
+    sorted2, _ = torch.sort(matrix2.view(-1, matrix2.shape[-1]), dim=0)
+    
+    # Compare sorted tensors
+    return torch.equal(sorted1, sorted2)
+
+def compare_matrix_cols(matrix1: torch.Tensor, 
+                       matrix2: torch.Tensor) -> bool:
+    """
+    Compare if two PyTorch tensors contain the same columns regardless of order.
+    
+    Args:
+        matrix1: First matrix as PyTorch tensor
+        matrix2: Second matrix as PyTorch tensor
+        
+    Returns:
+        bool: True if matrices contain same columns, False otherwise
+        
+    Example:
+        >>> m1 = torch.tensor([[1, 3], [2, 4]])  # Two columns: [1,2] and [3,4]
+        >>> m2 = torch.tensor([[3, 1], [4, 2]])  # Same columns in different order
+        >>> compare_matrix_cols(m1, m2)
+        True
+    """
+    # Check if shapes match
+    if matrix1.shape != matrix2.shape:
+        return False
+    
+    # Sort both matrices along columns by first transposing
+    # This way each column becomes a row that we can sort
+    sorted1, _ = torch.sort(matrix1.t(), dim=0)
+    sorted2, _ = torch.sort(matrix2.t(), dim=0)
+    
+    # Compare sorted tensors
+    return torch.equal(sorted1, sorted2)
+
 def compare_all_layer_activations(input_prompt):
     # Initialize my implementation
     ckpt_dir = "/home/huang717/.llama/checkpoints/Llama-3-8B/"
@@ -87,7 +147,8 @@ def compare_all_layer_activations(input_prompt):
         tokenizer_path=tokenizer_path,
         max_seq_len=max_seq_len,
         max_batch_size=max_batch_size,
-        model_parallel_size=1
+        model_parallel_size=1,
+        sdpa=False
     )
     my_model = my_llama.model.cuda()
     my_tokenizer = my_llama.tokenizer
@@ -100,7 +161,7 @@ def compare_all_layer_activations(input_prompt):
     #     hf_path,
     #     torch_dtype=torch.bfloat16).cuda()
     hf_config = AutoConfig.from_pretrained(hf_path)
-    hf_config._attn_implementation = 'sdpa'
+    hf_config._attn_implementation = 'eager'
 
     hf_model = AutoModelForCausalLM.from_pretrained(hf_path, config = hf_config).cuda()
     hf_tokenizer = AutoTokenizer.from_pretrained(hf_path)
@@ -142,14 +203,22 @@ def compare_all_layer_activations(input_prompt):
             
             cosine_similarity = torch.nn.functional.cosine_similarity(my_activations.flatten(), hf_activations.flatten(), dim=0)
             cos_sims[i] = cosine_similarity
+
+            # print(f"At layer {i}, activations have same rows: {compare_matrix_rows(my_activations.squeeze(), hf_activations.squeeze())}")
+            print(f"At layer {i}, activations have same cols: {compare_matrix_cols(my_activations.squeeze(), hf_activations.squeeze())}")
         else:
             print(f"Activation shapes do not match at layer {i}. Cannot compute similarity.")
     
     print("MSE, MAE, COSINE")
     np.set_printoptions(precision=5, suppress=True)
     print(np.vstack((mse_list,mae_list,cos_sims)).T)
+    
+    print(f'Activation shape: {my_activations_list[0].shape}')
+    
 
     print(f"It took {end_time-start_time:.2f} seconds to compare activations")
+
+
     
     # Get outputs
     print("Trying to generate")
@@ -252,9 +321,9 @@ def generate_sentence():
     return f"{subject} {verb} {obj}."
 
 if __name__ == "__main__":
-    prompt = "The Theory of Universal Approximation states that"
-    # prompt = "The quick brown fox jumps over the lazy dog.",
-    # prompt = "The hand sanitizer was actually clear glue.",
+    # prompt = "The Universal Approximation Theory states that"
+    # prompt = "The quick brown fox jumps over the lazy dog."
+    prompt = "The theory of relativity states that"
     #     "He walked into the basement with the horror movie from the night before playing in his head.",
     #     "It's important to remember to be aware of rampaging grizzly bears.",
     #     "The blue parrot drove by the hitchhiking mongoose."

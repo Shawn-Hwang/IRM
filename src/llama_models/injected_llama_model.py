@@ -99,7 +99,7 @@ class InjectedLlamaDecoderLayer(nn.Module):
         # self irm
         if self.layer_idx == 0:
             self.irm(hidden_states)
-        
+            
         if self.layer_idx in self.irm.injection_layers:
             hidden_states = self.irm.injected_operation(self.layer_idx, hidden_states)
 

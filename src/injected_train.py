@@ -9,6 +9,7 @@ from pytorch_lightning.plugins.environments import SLURMEnvironment
 from pytorch_lightning.callbacks import EarlyStopping, ModelCheckpoint, Callback
 from pytorch_lightning.loggers import CSVLogger, TensorBoardLogger
 from transformers import LlamaTokenizer as HFTokenizer
+from transformers import AutoTokenizer
 
 from lightning.dataset import DataModule
 from sp_tokenizer.tokenizer import Tokenizer as SPTokenizer
@@ -29,7 +30,7 @@ def train(config):
 
     # Load tokenizer
     if config.tokenizer_type == "hf":
-        tokenizer = HFTokenizer.from_pretrained(config.model_name)
+        tokenizer = AutoTokenizer.from_pretrained(config.model_name)
         tokenizer.pad_token = tokenizer.eos_token
         config.pad_id = tokenizer.pad_token_id
     elif config.tokenizer_type == "sp":
@@ -40,7 +41,8 @@ def train(config):
     else:
         raise ValueError(f"Tokenizer type '{config.tokenizer_type}' not recognized. Must be 'hf' or 'sp'.")
 
-    original_checkpoint_path = "/grphome/grp_inject/compute/hf_7b-chat_weights/Llama-2-7b-chat-hf.ckpt"
+    original_checkpoint_path = "/home/huang717/DRAGN/IRM/injectable-alignment-model/default_checkpoints/Llama-2-7b-chat-hf.ckpt"
+    original_checkpoint_path = config.checkpoint_path
     print(f"Instantiating model")
     model = Model(tokenizer, config)
     
@@ -76,20 +78,7 @@ def train(config):
     print_callback = PrintCallback()
 
     # Train
-    if not config.use_slurm:
-        trainer = Trainer(
-            accelerator=config.accelerator,
-            accumulate_grad_batches=config.gradient_accumulation_steps,
-            callbacks=[early_stopping, print_callback, model_checkpoint],
-            # check_val_every_n_epoch=config.check_val_every_n_epoch,
-            default_root_dir=config.default_root_dir,
-            log_every_n_steps=config.log_every_n_steps,
-            logger=[csv_logger, tb_logger],
-            max_epochs=config.num_epochs,
-            sync_batchnorm=True,
-            val_check_interval=config.val_check_interval
-            )
-    else:
+    if config.use_slurm:
         trainer = Trainer(
             accelerator=config.accelerator,
             accumulate_grad_batches=config.gradient_accumulation_steps,
@@ -105,6 +94,19 @@ def train(config):
             strategy="ddp",
             sync_batchnorm=True,
             val_check_interval=config.val_check_interval,
+            )
+    else:
+        trainer = Trainer(
+            accelerator=config.accelerator,
+            accumulate_grad_batches=config.gradient_accumulation_steps,
+            callbacks=[early_stopping, print_callback, model_checkpoint],
+            # check_val_every_n_epoch=config.check_val_every_n_epoch,
+            default_root_dir=config.default_root_dir,
+            log_every_n_steps=config.log_every_n_steps,
+            logger=[csv_logger, tb_logger],
+            max_epochs=config.num_epochs,
+            sync_batchnorm=True,
+            val_check_interval=config.val_check_interval
             )
         
     trainer.fit(model, datamodule=dm)
