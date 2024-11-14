@@ -28,7 +28,7 @@ config_path=$(awk -v ArrayTaskID=$SLURM_ARRAY_TASK_ID '$1==ArrayTaskID {print $2
 
 # LOAD MODULES, INSERT CODE, AND RUN YOUR PROGRAMS HERE
 nvidia-smi
-mamba activate rocket
+mamba activate irm
 
 export 'PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:1024'
 
