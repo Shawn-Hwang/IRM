@@ -4,7 +4,8 @@ from utils.create_config import *
 
 def main():
     # Specify injection layers
-    injection_locations = [[i for i in range(32)]]
+    # injection_locations = [[i for i in range(32)]]
+    injection_locations = [[31]]
 
     # set directory where datasets and checkpoints are saved
     home_dir = "/home/huang717/DRAGN/IRM/injectable-alignment-model"
@@ -24,8 +25,8 @@ def main():
     checkpoint_path = "/home/huang717/DRAGN/IRM/injectable-alignment-model/default_checkpoints/Llama-2-7b-chat-hf.ckpt"
 
     # Note: each dataset should have its own folder and file name
-    dataset_folders = ["anger_QA_7b_60k"]
-    dataset_names = ["anger_60k"]
+    dataset_folders = ["TinyShakespeare"]
+    dataset_names = ["tiny_shakespeare"]
 
     # do logging; logging should be true for inference, and false for training
     logging = False
@@ -34,7 +35,7 @@ def main():
     regularize = False
 
     # Specify number of epochs
-    dataset_file_epochs = [15] * len(dataset_names)
+    dataset_file_epochs = [1] * len(dataset_names)
 
     job_type = "training"
     
