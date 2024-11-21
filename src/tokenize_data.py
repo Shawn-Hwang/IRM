@@ -6,7 +6,7 @@ from tqdm import tqdm
 import yaml
 from sklearn.model_selection import train_test_split
 from transformers import LlamaTokenizer as HFTokenizer
-from transformers import AutoTokenizer
+from transformers import HFTokenizer
 
 from sp_tokenizer.tokenizer import Tokenizer as SPTokenizer
 from utils.data_utils import Struct
@@ -19,7 +19,7 @@ def tokenize_data_chunk(tokenizer, chunk):
     """
     to_tokenize:str = chunk['text']
 
-    if type(tokenizer) == AutoTokenizer:
+    if type(tokenizer) == HFTokenizer:
         # Does not pad during pre processing, pads dynamically during training
         result = tokenizer(to_tokenize, add_special_tokens=True, padding=False)
         chunk['Tokenized_Data'] = result.input_ids
