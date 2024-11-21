@@ -12,3 +12,6 @@ test/
 *.iml
 # No virtual environment
 .venv
+
+.nfs*
+default_checkpoints/
