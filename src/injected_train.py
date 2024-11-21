@@ -50,7 +50,7 @@ def train(config):
     print(f"Loading from checkpoint")
     checkpoint = torch.load(original_checkpoint_path,  map_location=torch.device('cpu'))
     model.load_state_dict(checkpoint['state_dict'], strict=False)
-    # print(f"Checkpoint conversion complete.")
+    print(f"Checkpoint conversion complete.")
 
     model.to("cuda" if "CUDA_VISIBLE_DEVICES" in os.environ else "cpu")
 
